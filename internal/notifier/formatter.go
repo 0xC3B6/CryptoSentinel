@@ -2,164 +2,240 @@
 package notifier
 
 import (
-	"bytes"
-	"text/template"
+	"fmt"
 	"time"
 
 	"CryptoSentinel/internal/model"
 )
 
-// ReportData 报告模板数据结构
-type ReportData struct {
-	Date           string
-	LeverageValue  float64
-	LeverageStatus string
-	PiStatus       string
-	MaStatus       string
-	AHR999Value    float64
-	AHR999Desc     string
-	MVRVZValue     float64
-	ETHPosition    string
-	BTCAction      string
-	AmountFactor   float64
-	ETHAction      string
-	WarningMsg     string
-	HasWarning     bool
+// FormatReportV2 生成简洁的周报格式
+func FormatReportV2(indicators *model.MarketIndicators, signal *model.TradeSignal) string {
+	date := time.Now().Format("2006-01-02")
+
+	// 宏观定调
+	macroTone := getMacroTone(signal)
+
+	// AHR999 分析
+	ahr999Section := formatAHR999Section(indicators.AHR999)
+
+	// MVRV-Z 分析
+	mvrvSection := formatMVRVSection(indicators.MVRVZScore)
+
+	// ETH 分析
+	ethSection := formatETHSection(indicators.EthRegressionState)
+
+	// 安全检查
+	safetySection := formatSafetySection(indicators)
+
+	// 执行建议
+	actionSection := formatActionSection(signal)
+
+	// 组装报告
+	report := fmt.Sprintf(`🛡️ **CryptoSentinel %s**
+
+📊 **宏观定调: %s**
+
+%s
+
+%s
+
+%s
+
+%s
+
+---------------------
+%s`,
+		date,
+		macroTone,
+		ahr999Section,
+		mvrvSection,
+		ethSection,
+		safetySection,
+		actionSection,
+	)
+
+	return report
 }
 
-// 报告模板
-const reportTemplate = `🛡️ **CryptoSentinel 周报** [{{.Date}}]
-{{if .HasWarning}}
-⚠️ **警告**: {{.WarningMsg}}
-{{end}}
-**1. 风控检查**
-- 杠杆率: {{printf "%.2f" .LeverageValue}}x ({{.LeverageStatus}})
-- 逃顶信号: Pi周期[{{.PiStatus}}] / MA状态[{{.MaStatus}}]
-
-**2. 核心指标**
-- 📏 AHR999: {{printf "%.4f" .AHR999Value}} -> {{.AHR999Desc}}
-- 🌡️ MVRV-Z: {{printf "%.2f" .MVRVZValue}}
-- 💎 ETH位置: {{.ETHPosition}}
-
-**3. 执行建议**
-- 🚀 **BTC 操作**: {{.BTCAction}}
-- 💰 **倍率**: {{printf "%.1f" .AmountFactor}}x
-- Ξ **ETH 操作**: {{.ETHAction}}
-
-_"看着资产像树苗一样慢慢长高，本身就是一件枯燥的事情。"_`
-
-// FormatReport 使用模板格式化报告
-func FormatReport(indicators *model.MarketIndicators, signal *model.TradeSignal) (string, error) {
-	tmpl, err := template.New("report").Parse(reportTemplate)
-	if err != nil {
-		return "", err
+// getMacroTone 获取宏观定调
+func getMacroTone(signal *model.TradeSignal) string {
+	if signal.IsHalted {
+		if signal.ActionBTC == model.ActionSellAlert {
+			return "🔴 逃顶警报"
+		}
+		return "⚠️ 风控熔断"
 	}
 
-	data := ReportData{
-		Date:           time.Now().Format("2006-01-02"),
-		LeverageValue:  indicators.AccountLeverage,
-		LeverageStatus: getLeverageStatus(indicators.AccountLeverage),
-		PiStatus:       getPiStatus(indicators.PiCycleCross),
-		MaStatus:       indicators.MaMultiplierState.String(),
-		AHR999Value:    indicators.AHR999,
-		AHR999Desc:     getAHR999Desc(indicators.AHR999),
-		MVRVZValue:     indicators.MVRVZScore,
-		ETHPosition:    getETHPosition(indicators.EthRegressionState),
-		BTCAction:      getBTCAction(signal.ActionBTC),
-		AmountFactor:   signal.AmountFactor,
-		ETHAction:      getETHAction(signal.ActionETH),
-		WarningMsg:     signal.WarningMsg,
-		HasWarning:     signal.WarningMsg != "",
+	switch signal.ActionBTC {
+	case model.ActionStrongBuy:
+		return "🟢 贪婪抄底"
+	case model.ActionDCABuy:
+		return "🟢 适合定投"
+	case model.ActionHold, model.ActionHoldCaution:
+		return "🟡 持有观望"
+	case model.ActionSell:
+		return "🔴 逐步离场"
+	default:
+		return "🟡 中性"
 	}
-
-	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
-		return "", err
-	}
-
-	return buf.String(), nil
 }
 
-// getLeverageStatus 获取杠杆状态描述
-func getLeverageStatus(leverage float64) string {
-	if leverage > 1.5 {
-		return "❌ 危险"
-	} else if leverage > 1.2 {
-		return "⚠️ 警戒"
-	}
-	return "✅ 安全"
-}
+// formatAHR999Section 格式化AHR999部分
+func formatAHR999Section(ahr999 float64) string {
+	var emoji, status, distance, comment string
 
-// getPiStatus 获取Pi周期状态
-func getPiStatus(cross bool) string {
-	if cross {
-		return "❌ 死叉"
-	}
-	return "✅ 正常"
-}
-
-// getAHR999Desc 获取AHR999区间描述
-func getAHR999Desc(ahr999 float64) string {
 	if ahr999 < 0.45 {
-		return "🟢 抄底区"
+		// 抄底区
+		emoji = "🟢"
+		status = "抄底区"
+		// 距离定投区的百分比
+		pct := (0.45 - ahr999) / 0.45 * 100
+		distance = fmt.Sprintf("已进入抄底，距定投区 %.0f%% 📈", pct)
+		comment = "绝佳机会，重仓买入"
 	} else if ahr999 < 1.20 {
-		return "🔵 定投区"
+		// 定投区
+		emoji = "🟢"
+		status = "定投区"
+		// 距离抄底区的百分比
+		pct := (ahr999 - 0.45) / ahr999 * 100
+		distance = fmt.Sprintf("距 [抄底区 0.45] 还有 %.0f%% 📉", pct)
+		comment = "价格划算，坚持定投"
 	} else if ahr999 < 5.00 {
-		return "🟡 持有区"
+		// 持有区
+		emoji = "🟡"
+		status = "持有区"
+		pct := (ahr999 - 1.20) / ahr999 * 100
+		distance = fmt.Sprintf("距 [定投区 1.20] 已涨 %.0f%% 📈", pct)
+		comment = "暂停买入，持币待涨"
+	} else {
+		// 逃顶区
+		emoji = "🔴"
+		status = "逃顶区"
+		pct := (ahr999 - 5.00) / ahr999 * 100
+		distance = fmt.Sprintf("已超逃顶线 %.0f%% 🚨", pct)
+		comment = "分批卖出，锁定利润"
 	}
-	return "🔴 逃顶区"
+
+	return fmt.Sprintf(`**1. 囤币指标 (AHR999)**
+• 数值: `+"`%.2f`"+` %s
+• 状态: **%s**
+• 距离: %s
+_(点评: %s)_`, ahr999, emoji, status, distance, comment)
 }
 
-// getETHPosition 获取ETH位置描述
-func getETHPosition(state model.EthRegressionState) string {
+// formatMVRVSection 格式化MVRV-Z部分
+func formatMVRVSection(zScore float64) string {
+	var emoji, status, distance string
+
+	if zScore < 0 {
+		emoji = "🟢"
+		status = "极度低估"
+		distance = "已跌破 0 轴，历史大底区域"
+	} else if zScore < 1 {
+		emoji = "❄️"
+		status = "底部区间"
+		pct := zScore / 1 * 100
+		distance = fmt.Sprintf("距 0 轴还有 %.0f%%，接近大底", 100-pct)
+	} else if zScore < 3 {
+		emoji = "🟡"
+		status = "中性区间"
+		distance = "市场温和，可正常操作"
+	} else if zScore < 6 {
+		emoji = "🟠"
+		status = "偏热区间"
+		pct := (zScore - 3) / 3 * 100
+		distance = fmt.Sprintf("距 [过热 6.0] 还有 %.0f%%", 100-pct)
+	} else {
+		emoji = "🔴"
+		status = "极度过热"
+		distance = "市场狂热，谨慎追高"
+	}
+
+	return fmt.Sprintf(`**2. 市场冷热 (MVRV-Z)**
+• 数值: `+"`%.2f`"+` %s
+• 状态: **%s**
+• 距离: %s`, zScore, emoji, status, distance)
+}
+
+// formatETHSection 格式化ETH部分
+func formatETHSection(state model.EthRegressionState) string {
+	var emoji, status, strategy string
+
 	switch state {
 	case model.EthRegLower:
-		return "🟢 低估区"
+		emoji = "🟢"
+		status = "低估区"
+		strategy = "可加大 ETH 配置比例"
 	case model.EthRegMiddle:
-		return "🟡 中间区"
+		emoji = "🟡"
+		status = "中性"
+		strategy = "不主动出击，跟随 BTC 配比"
 	case model.EthRegUpper:
-		return "🔴 高估区"
+		emoji = "🔴"
+		status = "高估区"
+		strategy = "减少 ETH，换成 BTC 或 U"
 	default:
-		return "❓ 未知"
+		emoji = "⚪️"
+		status = "未知"
+		strategy = "数据不足，保持观望"
 	}
+
+	return fmt.Sprintf(`**3. 以太坊 (ETH)**
+• 状态: %s **%s**
+• 策略: %s`, emoji, status, strategy)
 }
 
-// getBTCAction 获取BTC操作描述
-func getBTCAction(action string) string {
-	switch action {
+// formatSafetySection 格式化安全检查部分
+func formatSafetySection(indicators *model.MarketIndicators) string {
+	// 杠杆状态
+	leverageStatus := "✅"
+	if indicators.AccountLeverage > 1.5 {
+		leverageStatus = "❌ 危险"
+	} else if indicators.AccountLeverage > 1.2 {
+		leverageStatus = "⚠️ 警戒"
+	}
+
+	// 逃顶信号
+	escapeStatus := "⚪️ 暂无风险"
+	if indicators.PiCycleCross {
+		escapeStatus = "🔴 Pi周期死叉"
+	} else if indicators.MaMultiplierState == model.MaStateBullTop {
+		escapeStatus = "🔴 突破两年红线"
+	}
+
+	return fmt.Sprintf(`**4. 安全检查**
+• 杠杆: %.1fx %s (安全线 < 1.5x)
+• 逃顶: %s`, indicators.AccountLeverage, leverageStatus, escapeStatus)
+}
+
+// formatActionSection 格式化执行建议部分
+func formatActionSection(signal *model.TradeSignal) string {
+	var action string
+
+	switch signal.ActionBTC {
 	case model.ActionHalt:
-		return "🛑 熔断停止"
+		action = "⛔️ 停止操作"
 	case model.ActionSellAlert:
-		return "🚨 逃顶警报"
+		action = "🚨 准备离场"
 	case model.ActionStrongBuy:
-		return "💪 贪婪买入"
+		action = "💪 重仓买入 BTC"
 	case model.ActionDCABuy:
-		return "📈 正常定投"
-	case model.ActionHold:
-		return "✋ 持有观望"
-	case model.ActionHoldCaution:
-		return "⚠️ 谨慎持有"
+		action = "📈 买入 BTC"
+	case model.ActionHold, model.ActionHoldCaution:
+		action = "✋ 持有等待"
 	case model.ActionSell:
-		return "📉 逐步卖出"
+		action = "📉 分批卖出"
 	default:
-		return action
+		action = "观望"
 	}
-}
 
-// getETHAction 获取ETH操作描述
-func getETHAction(action string) string {
-	switch action {
-	case model.ActionHalt:
-		return "🛑 熔断停止"
-	case model.ActionSellAlert:
-		return "🚨 逃顶警报"
-	case model.ActionETHBuyHeavy:
-		return "💪 重仓买入"
-	case model.ActionETHSellOrSwap:
-		return "🔄 卖出/换BTC"
-	case model.ActionETHFollowBTC:
-		return "👉 跟随BTC"
-	default:
-		return action
+	factorEmoji := "💰"
+	if signal.AmountFactor >= 1.5 {
+		factorEmoji = "💰💰"
+	} else if signal.AmountFactor == 0 {
+		factorEmoji = "🚫"
 	}
+
+	return fmt.Sprintf(`🚀 **本周执行: %s**
+%s **资金系数: %.1f 倍**`, action, factorEmoji, signal.AmountFactor)
 }

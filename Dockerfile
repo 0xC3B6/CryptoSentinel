@@ -16,6 +16,9 @@ RUN go mod download
 # 复制源代码
 COPY . .
 
+# 同步依赖
+RUN go mod tidy
+
 # 构建二进制文件
 # CGO_ENABLED=0 生成静态链接的二进制文件
 # -ldflags="-w -s" 减小二进制文件大小
