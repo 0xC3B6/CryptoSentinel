@@ -31,8 +31,20 @@ func main() {
 	}
 	log.Println("配置加载成功")
 
-	// 初始化各模块
-	dataCollector := collector.NewCollector(cfg.DataSource.AHR999URL)
+	// 初始化数据采集器（支持代理）
+	var dataCollector *collector.CollectorV2
+	proxyAddr := os.Getenv("HTTPS_PROXY")
+	if proxyAddr == "" {
+		proxyAddr = os.Getenv("HTTP_PROXY")
+	}
+	if proxyAddr != "" {
+		log.Printf("使用代理: %s", proxyAddr)
+		dataCollector = collector.NewCollectorV2WithProxy(proxyAddr)
+	} else {
+		dataCollector = collector.NewCollectorV2()
+	}
+
+	// 初始化Telegram通知器
 	telegramNotifier := notifier.NewTelegramNotifier(cfg.Telegram.BotToken, cfg.Telegram.ChatID)
 
 	// 获取杠杆率配置
@@ -47,24 +59,24 @@ func main() {
 	taskFunc := func() {
 		log.Println("执行定时任务...")
 
-		// 1. 采集数据
-		marketData, err := dataCollector.FetchAHR999()
+		// 1. 采集所有市场指标
+		indicators, err := dataCollector.FetchAllIndicators(leverage)
 		if err != nil {
-			errMsg := fmt.Sprintf("获取AHR999数据失败: %v", err)
+			errMsg := fmt.Sprintf("获取市场数据失败: %v", err)
 			log.Println(errMsg)
 			if sendErr := telegramNotifier.SendWithRetry(errMsg, 3); sendErr != nil {
 				log.Printf("发送错误通知失败: %v", sendErr)
 			}
 			return
 		}
-		log.Printf("获取到AHR999数据: %.4f", marketData.AHR999)
+		log.Printf("获取到AHR999数据: %.4f, BTC价格: %.2f", indicators.AHR999, indicators.CurrentPriceBTC)
 
-		// 2. 执行策略分析
-		decision := strategy.Evaluate(marketData.AHR999, leverage)
-		log.Printf("策略决策: %s", decision.Action)
+		// 2. 执行V2多因子策略分析
+		signal := strategy.EvaluateV2(indicators)
+		log.Printf("策略决策: BTC=%s, ETH=%s", signal.ActionBTC, signal.ActionETH)
 
-		// 3. 生成通知消息
-		message := formatMessage(marketData, decision, leverage)
+		// 3. 生成V2格式报告
+		message := notifier.FormatReportV2(indicators, signal)
 
 		// 4. 发送通知
 		if err := telegramNotifier.SendWithRetry(message, 3); err != nil {
@@ -99,49 +111,4 @@ func main() {
 	log.Println("收到退出信号，正在关闭...")
 	c.Stop()
 	log.Println("CryptoSentinel 已关闭")
-}
-
-// formatMessage 格式化Telegram通知消息
-func formatMessage(data *collector.MarketData, decision *strategy.Decision, leverage float64) string {
-	actionEmoji := getActionEmoji(decision.Action)
-	return fmt.Sprintf(`*CryptoSentinel 定投提醒*
-
-%s *%s*
-
-*AHR999指数:* %.4f
-*当前杠杆率:* %.2f
-*资金倍率:* %.1fx
-
-*分析:*
-%s
-
-_数据来源: %s_
-_时间: %s_`,
-		actionEmoji,
-		decision.Action,
-		data.AHR999,
-		leverage,
-		decision.AmountFactor,
-		decision.Message,
-		data.Source,
-		data.Timestamp.Format("2006-01-02 15:04:05"),
-	)
-}
-
-// getActionEmoji 根据动作返回对应的emoji
-func getActionEmoji(action strategy.Action) string {
-	switch action {
-	case strategy.ActionWarning:
-		return "🚨"
-	case strategy.ActionGreedyBuy:
-		return "🟢"
-	case strategy.ActionDCA:
-		return "🔵"
-	case strategy.ActionHold:
-		return "🟡"
-	case strategy.ActionSell:
-		return "🔴"
-	default:
-		return "📊"
-	}
 }

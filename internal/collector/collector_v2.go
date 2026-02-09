@@ -2,36 +2,34 @@
 package collector
 
 import (
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"time"
 
+	"CryptoSentinel/internal/calculator"
 	"CryptoSentinel/internal/model"
 )
 
 // CollectorV2 升级版数据采集器，支持多指标采集
 type CollectorV2 struct {
 	client    *http.Client
-	ahr999URL string
+	proxyAddr string
 	userAgent string
 }
 
 // NewCollectorV2 创建升级版数据采集器
-func NewCollectorV2(ahr999URL string) *CollectorV2 {
+func NewCollectorV2() *CollectorV2 {
 	return &CollectorV2{
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		ahr999URL: ahr999URL,
-		userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		userAgent: "CryptoSentinel/1.0",
 	}
 }
 
 // NewCollectorV2WithProxy 创建带代理的数据采集器
-func NewCollectorV2WithProxy(ahr999URL, proxyAddr string) *CollectorV2 {
+func NewCollectorV2WithProxy(proxyAddr string) *CollectorV2 {
 	proxyURL, _ := url.Parse("http://" + proxyAddr)
 
 	return &CollectorV2{
@@ -41,8 +39,8 @@ func NewCollectorV2WithProxy(ahr999URL, proxyAddr string) *CollectorV2 {
 				Proxy: http.ProxyURL(proxyURL),
 			},
 		},
-		ahr999URL: ahr999URL,
-		userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+		proxyAddr: proxyAddr,
+		userAgent: "CryptoSentinel/1.0",
 	}
 }
 
@@ -52,7 +50,7 @@ func (c *CollectorV2) FetchAllIndicators(leverage float64) (*model.MarketIndicat
 	indicators := &model.MarketIndicators{
 		Timestamp:       time.Now(),
 		AccountLeverage: leverage,
-		Source:          c.ahr999URL,
+		Source:          "Binance",
 	}
 
 	// 1. 获取AHR999指数
@@ -82,56 +80,29 @@ func (c *CollectorV2) FetchAllIndicators(leverage float64) (*model.MarketIndicat
 	return indicators, nil
 }
 
-// fetchAHR999 获取AHR999指数
+// fetchAHR999 通过Binance K线数据自主计算AHR999指数
 func (c *CollectorV2) fetchAHR999(indicators *model.MarketIndicators) error {
-	req, err := http.NewRequest("GET", c.ahr999URL, nil)
+	var calc *calculator.AHR999Calculator
+	if c.proxyAddr != "" {
+		calc = calculator.NewAHR999CalculatorWithProxy(c.proxyAddr)
+	} else {
+		calc = calculator.NewAHR999Calculator()
+	}
+
+	result, err := calc.Calculate()
 	if err != nil {
-		return fmt.Errorf("创建请求失败: %w", err)
+		return fmt.Errorf("计算AHR999失败: %w", err)
 	}
 
-	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("请求失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("请求返回非200状态码: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("读取响应体失败: %w", err)
-	}
-
-	var apiResp struct {
-		Code int `json:"code"`
-		Data struct {
-			AHR999 float64 `json:"ahr999"`
-		} `json:"data"`
-		Message string `json:"message"`
-	}
-
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return fmt.Errorf("解析JSON失败: %w", err)
-	}
-
-	if apiResp.Code != 0 {
-		return fmt.Errorf("API返回错误: %s", apiResp.Message)
-	}
-
-	indicators.AHR999 = apiResp.Data.AHR999
+	indicators.AHR999 = result.AHR999
+	indicators.CurrentPriceBTC = result.CurrentPrice
 	return nil
 }
 
-// fetchPrices 获取BTC和ETH价格
+// fetchPrices 获取ETH价格（BTC价格已从AHR999计算中获得）
 func (c *CollectorV2) fetchPrices(indicators *model.MarketIndicators) error {
-	// TODO: 接入真实价格API（如CoinGecko、Binance等）
-	// 目前使用Mock数据
-	indicators.CurrentPriceBTC = 95000.0
+	// TODO: 接入真实ETH价格API（如Binance等）
+	// 目前ETH使用Mock数据
 	indicators.CurrentPriceETH = 3500.0
 	return nil
 }
