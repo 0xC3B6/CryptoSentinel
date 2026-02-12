@@ -27,6 +27,9 @@ func FormatReportV2(indicators *model.MarketIndicators, signal *model.TradeSigna
 	// 安全检查
 	safetySection := formatSafetySection(indicators)
 
+	// 实时价格
+	priceSection := formatPriceSection(indicators)
+
 	// 执行建议
 	actionSection := formatActionSection(signal)
 
@@ -43,10 +46,13 @@ func FormatReportV2(indicators *model.MarketIndicators, signal *model.TradeSigna
 
 %s
 
+%s
+
 ---------------------
 %s`,
 		date,
 		macroTone,
+		priceSection,
 		ahr999Section,
 		mvrvSection,
 		ethSection,
@@ -55,6 +61,12 @@ func FormatReportV2(indicators *model.MarketIndicators, signal *model.TradeSigna
 	)
 
 	return report
+}
+
+// formatPriceSection 格式化实时价格部分
+func formatPriceSection(indicators *model.MarketIndicators) string {
+	return fmt.Sprintf("**💲 实时价格**\n• BTC: `$%.2f`\n• ETH: `$%.2f`",
+		indicators.CurrentPriceBTC, indicators.CurrentPriceETH)
 }
 
 // getMacroTone 获取宏观定调
