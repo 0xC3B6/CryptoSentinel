@@ -2,14 +2,23 @@
 package collector
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"CryptoSentinel/internal/calculator"
 	"CryptoSentinel/internal/model"
 )
+
+// binanceTickerResponse Binance ticker价格响应
+type binanceTickerResponse struct {
+	Symbol string `json:"symbol"`
+	Price  string `json:"price"`
+}
 
 // CollectorV2 升级版数据采集器，支持多指标采集
 type CollectorV2 struct {
@@ -101,9 +110,35 @@ func (c *CollectorV2) fetchAHR999(indicators *model.MarketIndicators) error {
 
 // fetchPrices 获取ETH价格（BTC价格已从AHR999计算中获得）
 func (c *CollectorV2) fetchPrices(indicators *model.MarketIndicators) error {
-	// TODO: 接入真实ETH价格API（如Binance等）
-	// 目前ETH使用Mock数据
-	indicators.CurrentPriceETH = 3500.0
+	apiURL := "https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT"
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return fmt.Errorf("创建ETH价格请求失败: %w", err)
+	}
+	req.Header.Set("User-Agent", c.userAgent)
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("获取ETH价格失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("读取ETH价格响应失败: %w", err)
+	}
+
+	var ticker binanceTickerResponse
+	if err := json.Unmarshal(body, &ticker); err != nil {
+		return fmt.Errorf("解析ETH价格响应失败: %w", err)
+	}
+
+	price, err := strconv.ParseFloat(ticker.Price, 64)
+	if err != nil {
+		return fmt.Errorf("解析ETH价格值失败: %w", err)
+	}
+
+	indicators.CurrentPriceETH = price
 	return nil
 }
 

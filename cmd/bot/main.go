@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -97,6 +98,10 @@ func main() {
 	c.Start()
 	log.Printf("定时任务已启动，Cron表达式: %s", cfg.Schedule.CronSpec)
 
+	// 启动Telegram长轮询，监听用户命令
+	ctx, cancel := context.WithCancel(context.Background())
+	go telegramNotifier.StartPolling(ctx, taskFunc)
+
 	// 启动时立即执行一次（可选）
 	if os.Getenv("RUN_ON_START") == "true" {
 		log.Println("启动时执行一次任务...")
@@ -109,6 +114,7 @@ func main() {
 	<-quit
 
 	log.Println("收到退出信号，正在关闭...")
+	cancel()
 	c.Stop()
 	log.Println("CryptoSentinel 已关闭")
 }
