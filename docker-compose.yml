@@ -2,9 +2,8 @@ version: '3.8'
 
 services:
   cryptosentinel:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/0xc3b6/cryptosentinel:latest
+    pull_policy: always
     container_name: cryptosentinel
     restart: unless-stopped
 
